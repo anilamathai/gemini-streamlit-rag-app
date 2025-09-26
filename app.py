@@ -1,33 +1,36 @@
 import os
 import numpy as np
 from google import genai
-#from dotenv import load_dotenv
 from sentence_transformers import SentenceTransformer
 import streamlit as st
 
 # --- CONFIGURATION --- #
 
-# Load environment variables. Ensure GEMINI_API_KEY is set.
-#load_dotenv(r"C:\eaton_rag_app\.env")
-
 # 1. LLM Client: Initialize the Gemini Client
 @st.cache_resource
-def get_gemini_client():
+def create_gemini_client():
+    gemini_key = None
     try:
-        # st.secrets is the secure way to access the key on Streamlit Cloud
+        # 1. Check Streamlit Secrets (Cloud deployment)
         gemini_key = st.secrets["GEMINI_API_KEY"]
     except (AttributeError, KeyError):
-        # This fallback is for running *locally* if you still want to use .env
+        # 2. Fallback to Environment Variable (Local development)
         gemini_key = os.getenv("GEMINI_API_KEY") 
 
     if not gemini_key:
-        st.error("FATAL ERROR: GEMINI_API_KEY not found.")
-        # Do not proceed without the key
-        st.stop()
+        # Instead of st.stop(), raise a standard Python error.
+        raise ValueError("FATAL ERROR: GEMINI_API_KEY not found in Streamlit Secrets or Environment Variables.")
 
     return genai.Client(api_key=gemini_key) 
 
-client = get_gemini_client()
+# Initialize the client outside the function, with a try/except to catch the ValueError
+client = None
+try:
+    client = create_gemini_client()
+except ValueError as e:
+    # Store the error message in session state, but allow the rest of the script to run
+    st.session_state["gemini_client_error"] = str(e)
+    client = None
 
 # 2. Embedding Model: Initialize the local Sentence Transformer model
 EMBEDDING_MODEL_NAME = "all-MiniLM-L6-v2"
@@ -84,6 +87,10 @@ def cosine_similarity(a, b):
 
 
 def chat_with_rag(user_input):
+    # CRITICAL CHECK: Ensure client is initialized before using it
+    if client is None:
+        return st.session_state.get("gemini_client_error", "[Error: Gemini Client not initialized.]")
+
     messages = st.session_state.messages
     
     # RAG Logic
@@ -117,13 +124,12 @@ def chat_with_rag(user_input):
             }
         )
     except Exception as e:
-        return f"[Error: Gemini API Call Failed] Ensure your GEMINI_API_KEY is correct and set in your environment. Details: {e}"
+        return f"[Error: Gemini API Call Failed] Details: {e}"
 
     # Get assistant reply, add to history
     reply = response.text
     
     # Add original user input and the reply to the session history for display
-    # This ensures both messages are saved for the next full script rerun (history display loop)
     messages.append({"role": "user", "content": user_input})
     messages.append({"role": "assistant", "content": reply})
 
@@ -135,11 +141,18 @@ st.set_page_config(page_title="Eaton RAG Chatbot (Gemini + Streamlit)", layout="
 st.title("⚡️ Eaton RAG Chatbot")
 st.caption(f"Powered by **{MODEL}** (via Gemini API) and **Sentence-Transformers** (Local Embeddings)")
 
+# DISPLAY API KEY ERROR FIRST (The Fix)
+if client is None:
+    st.error(st.session_state.get("gemini_client_error", "An unknown error occurred during client initialization."))
+    # Stop execution here, but AFTER the error is displayed.
+    st.stop()
+
+
 # Initialize chat history in Streamlit session state
 if "messages" not in st.session_state:
     st.session_state.messages = [{"role": "system", "content": SYSTEM_PROMPT}]
 
-# Display conversation history (This loop runs first)
+# Display conversation history
 for message in st.session_state.messages:
     if message["role"] != "system":
         with st.chat_message(message["role"]):
@@ -148,13 +161,11 @@ for message in st.session_state.messages:
 # Handle user input
 if prompt := st.chat_input("Ask about Eaton's products, sectors, or sustainability..."):
     
-    # 1. DISPLAY CURRENT USER PROMPT IMMEDIATELY (The Fix!)
+    # 1. DISPLAY CURRENT USER PROMPT IMMEDIATELY
     with st.chat_message("user"):
         st.markdown(prompt)
     
     # 2. Generate and display assistant response
-    # The chat_with_rag function is now responsible for generating the response
-    # AND saving both the user and assistant messages to st.session_state.messages
     with st.chat_message("assistant"):
         with st.spinner(f"Asking {MODEL}..."):
             response = chat_with_rag(prompt)
