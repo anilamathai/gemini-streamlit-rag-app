@@ -1,31 +1,31 @@
 import os
 import numpy as np
 from google import genai
-from dotenv import load_dotenv
+#from dotenv import load_dotenv
 from sentence_transformers import SentenceTransformer
 import streamlit as st
 
 # --- CONFIGURATION --- #
 
 # Load environment variables. Ensure GEMINI_API_KEY is set.
-load_dotenv(r"C:\eaton_rag_app\.env")
+#load_dotenv(r"C:\eaton_rag_app\.env")
 
 # 1. LLM Client: Initialize the Gemini Client
 @st.cache_resource
 def get_gemini_client():
-    # Retrieve the API key from the environment
-    GEMINI_KEY = os.getenv("GEMINI_API_KEY")
-    
-    # Check if the key was found (This ensures the previous fix is maintained)
-    if not GEMINI_KEY:
-        st.error(
-            "FATAL ERROR: The GEMINI_API_KEY was not found in your environment. "
-            "Please check your .env file and ensure the variable is named 'GEMINI_API_KEY'."
-        )
-        raise ValueError("Missing GEMINI_API_KEY environment variable.")
+    try:
+        # st.secrets is the secure way to access the key on Streamlit Cloud
+        gemini_key = st.secrets["GEMINI_API_KEY"]
+    except (AttributeError, KeyError):
+        # This fallback is for running *locally* if you still want to use .env
+        gemini_key = os.getenv("GEMINI_API_KEY") 
 
-    # Pass the key directly to the client
-    return genai.Client(api_key=GEMINI_KEY) 
+    if not gemini_key:
+        st.error("FATAL ERROR: GEMINI_API_KEY not found.")
+        # Do not proceed without the key
+        st.stop()
+
+    return genai.Client(api_key=gemini_key) 
 
 client = get_gemini_client()
 
